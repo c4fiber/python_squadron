@@ -11,7 +11,12 @@ dependencies = [
     "pandas>=3.0.1",
 ]
 
+[project.scripts]
+analyze-data-with-graph = "analyze-data-with-graph.main:main"
+parse-syslog = "parse-syslog.main:main"
+product-auto-input = "product_auto_input.main:main"
+
 [tool.uv.workspace]
 members = [
-    "product_auto_input",
+    "packages/core",
 ]
