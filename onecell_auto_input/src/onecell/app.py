@@ -89,7 +89,7 @@ def save_settings(cfg: configparser.ConfigParser) -> None:
 # 판매가 계산
 # ─────────────────────────────────────────────
 def calc_sell_price(buy: float, fee: float, margin: float) -> int:
-    raw = (buy + fee) * 1.1 * (1 + margin / 100)
+    raw = buy * 1.1 * (1 + margin / 100) + fee
     return int(round(raw / 10) * 10)
 
 

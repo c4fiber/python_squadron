@@ -7,6 +7,7 @@ parser.py — Mechanism
 """
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -35,39 +36,45 @@ class ProductRecord:
 # ─────────────────────────────────────────────
 # 공통 유틸리티
 # ─────────────────────────────────────────────
-_OPTION_KEYWORDS = ["색상", "사이즈", "타입", "품목"]
+ATTR_NAME1 = "색상"
+ATTR_NAME2 = "사이즈"
+DEFAULT_VAL1 = "ONECOLOR"
+DEFAULT_VAL2 = "ONESIZE"
+DEFAULT_STOCK = "999"
+
+# 제품명 끝 관리코드 패턴: 공백 + 대문자알파벳-숫자 (예: NF-74, SD-251014, URK-274)
+_TRAILING_CODE = re.compile(r'\s+[A-Z]+-[0-9]+(-[0-9]+)*$')
 
 
-def _parse_option_names(raw: str) -> list[str]:
+def _clean_product_name(name: str) -> str:
+    """제품명 끝의 관리코드 패턴([A-Z]+-[0-9]+(-[0-9]+)*)을 제거한다."""
+    return _TRAILING_CODE.sub('', name).strip()
+
+
+def _extract_color_size(raw_opt_name: str, raw_opt_val: str) -> tuple[str, str]:
     """
-    옵션명 문자열 → 속성명 리스트.
-    1) 개행 구분: '색상\n사이즈' → ['색상', '사이즈']
-    2) 붙은 형태 fallback: '색상사이즈' → 키워드 위치 기반 분리
-    3개 이상이면 색상·사이즈 우선 2개 선택.
+    옵션명/옵션값 원본에서 색상값·사이즈값을 추출한다.
+    - 속성명1은 항상 "색상", 속성명2는 항상 "사이즈"로 고정
+    - 옵션명이 개행 구분(\'색상\n사이즈\')이면 순서대로 색상/사이즈 매핑
+    - 옵션값이 개행 구분이면 첫 번째 → 색상값, 두 번째 → 사이즈값
+    - 값이 없으면 ONECOLOR / ONESIZE 기본값 적용
     """
-    if not raw:
-        return []
-    if "\n" in raw:
-        parts = [p.strip() for p in raw.split("\n") if p.strip()]
-        if len(parts) >= 3:
-            pri    = [k for k in ["색상", "사이즈"] if k in parts]
-            others = [k for k in parts if k not in pri]
-            parts  = (pri + others)[:2]
-        return parts[:2]
-    found = sorted([(raw.find(kw), kw) for kw in _OPTION_KEYWORDS if kw in raw])
-    result = [kw for _, kw in found]
-    if len(result) >= 3:
-        pri    = [k for k in ["색상", "사이즈"] if k in result]
-        others = [k for k in result if k not in pri]
-        result = (pri + others)[:2]
-    return result[:2]
+    names = [n.strip() for n in raw_opt_name.split("\n") if n.strip()] if raw_opt_name else []
+    vals  = [v.strip() for v in raw_opt_val.split("\n")  if v.strip()] if raw_opt_val  else []
 
+    # 옵션명 위치로 색상/사이즈 인덱스 결정
+    color_idx = next((i for i, n in enumerate(names) if "색상" in n), None)
+    size_idx  = next((i for i, n in enumerate(names) if "사이즈" in n), None)
 
-def _default_val(attr_name: str, val: str) -> str:
-    """빈 속성값 → ONE COLOR / ONE SIZE 기본값."""
-    if val:
-        return val
-    return "ONE COLOR" if attr_name == "색상" else "ONE SIZE"
+    color_val = vals[color_idx] if color_idx is not None and color_idx < len(vals) else ""
+    size_val  = vals[size_idx]  if size_idx  is not None and size_idx  < len(vals) else ""
+
+    # 옵션명 구분 없이 값만 있는 경우 (단일 값): 첫 번째를 색상으로
+    if not names and vals:
+        color_val = vals[0]
+        size_val  = vals[1] if len(vals) > 1 else ""
+
+    return (color_val or DEFAULT_VAL1, size_val or DEFAULT_VAL2)
 
 
 # ─────────────────────────────────────────────
@@ -129,23 +136,11 @@ class SudoParser(BaseParser):
             name = col(cells, "상품명")
             if not name:
                 continue
+            name = _clean_product_name(name)
 
-            raw_opt_name = col(cells, "옵션명")
-            raw_opt_val  = col(cells, "옵션값")
-
-            opt_names = _parse_option_names(raw_opt_name)
-            opt_vals  = (
-                [p.strip() for p in raw_opt_val.split("\n") if p.strip()]
-                if "\n" in raw_opt_val
-                else ([raw_opt_val.strip()] if raw_opt_val.strip() else [])
+            av1, av2 = _extract_color_size(
+                col(cells, "옵션명"), col(cells, "옵션값")
             )
-            while len(opt_vals) < len(opt_names):
-                opt_vals.append("")
-
-            an1 = opt_names[0] if opt_names else "색상"
-            av1 = _default_val(an1, opt_vals[0] if opt_vals else "")
-            an2 = opt_names[1] if len(opt_names) > 1 else ""
-            av2 = _default_val(an2, opt_vals[1] if len(opt_vals) > 1 else "") if an2 else ""
 
             try:
                 buy = float(col(cells, "판매가") or 0)
@@ -155,11 +150,11 @@ class SudoParser(BaseParser):
             records.append(ProductRecord(
                 product_name    = name,
                 buy_price       = buy,
-                attr_name1      = an1,
+                attr_name1      = ATTR_NAME1,
                 attr_val1       = av1,
-                attr_name2      = an2,
+                attr_name2      = ATTR_NAME2,
                 attr_val2       = av2,
-                stock           = col(cells, "재고수량") or "999",
+                stock           = DEFAULT_STOCK,
                 seller_code     = col(cells, "판매자 상품코드"),
                 brand           = col(cells, "브랜드") or "상세설명참조",
                 manufacturer    = col(cells, "제조사") or "상세설명참조",
@@ -216,14 +211,15 @@ class ModuParser(BaseParser):
 
         records = []
         for r in range(1, ws.nrows):
-            name = cv(r, "name").strip()
+            name = _clean_product_name(cv(r, "name").strip())
             if not name:
                 continue
+            name = _clean_product_name(name)
 
-            an1 = cv(r, "opt_n1") or "색상"
-            av1 = _default_val(an1, cv(r, "opt_v1"))
-            an2 = cv(r, "opt_n2")
-            av2 = _default_val(an2, cv(r, "opt_v2")) if an2 else ""
+            # 모두 파일은 옵션이름1/2가 이미 분리되어 있음 → 이름 무시하고 값만 추출
+            raw_opt_name = f"{cv(r, 'opt_n1')}\n{cv(r, 'opt_n2')}"
+            raw_opt_val  = f"{cv(r, 'opt_v1')}\n{cv(r, 'opt_v2')}"
+            av1, av2 = _extract_color_size(raw_opt_name, raw_opt_val)
 
             try:
                 price_col = idx.get("price")
@@ -234,11 +230,11 @@ class ModuParser(BaseParser):
             records.append(ProductRecord(
                 product_name    = name,
                 buy_price       = buy,
-                attr_name1      = an1,
+                attr_name1      = ATTR_NAME1,
                 attr_val1       = av1,
-                attr_name2      = an2,
+                attr_name2      = ATTR_NAME2,
                 attr_val2       = av2,
-                stock           = "999",
+                stock           = DEFAULT_STOCK,
                 seller_code     = cv(r, "code"),
                 brand           = "상세설명참조",
                 manufacturer    = "상세설명참조",
