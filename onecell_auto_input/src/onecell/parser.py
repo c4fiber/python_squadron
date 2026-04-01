@@ -11,6 +11,11 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+# 최상단 import: PyInstaller 정적 분석이 lazy import를 놓치지 않도록
+import xlrd                                    # ModuParser
+from bs4 import BeautifulSoup                  # SudoParser
+from bs4 import NavigableString, Tag as BSTag  # SudoParser._cell_text
+
 
 # ─────────────────────────────────────────────
 # 공통 데이터 모델
@@ -99,7 +104,6 @@ class SudoParser(BaseParser):
     @staticmethod
     def _cell_text(td) -> str:
         """<br>/<br/> → \\n 변환 후 텍스트 추출. strip=True는 \\n을 제거하므로 직접 순회."""
-        from bs4 import NavigableString, Tag as BSTag
         parts = []
         for child in td.children:
             if isinstance(child, NavigableString):
@@ -111,7 +115,6 @@ class SudoParser(BaseParser):
         return "".join(parts).strip()
 
     def parse(self, filepath: str) -> list[ProductRecord]:
-        from bs4 import BeautifulSoup
         with open(filepath, encoding="utf-8", errors="replace") as f:
             content = f.read()
         soup  = BeautifulSoup(content, "html.parser")
@@ -176,7 +179,6 @@ class ModuParser(BaseParser):
     """
 
     def parse(self, filepath: str) -> list[ProductRecord]:
-        import xlrd
         wb = xlrd.open_workbook(filepath)
         ws = wb.sheet_by_index(0)
         if ws.nrows < 2:
