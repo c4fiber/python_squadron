@@ -1,0 +1,25 @@
+[project]
+name = "onecell"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "xlrd>=2.0",
+]
+
+[tool.uv]
+package = true
+
+[project.scripts]
+# uv sync 후 아래 명령으로 실행:
+#   uv run onecell
+onecell = "onecell.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/onecell"]
