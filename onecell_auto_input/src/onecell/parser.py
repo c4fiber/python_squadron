@@ -48,7 +48,7 @@ DEFAULT_VAL2 = "ONESIZE"
 DEFAULT_STOCK = "999"
 
 # 제품명 끝 관리코드 패턴: 공백 + 대문자알파벳-숫자 (예: NF-74, SD-251014, URK-274)
-_TRAILING_CODE = re.compile(r'\s+[A-Z]+-[0-9]+(-[0-9]+)*$')
+_TRAILING_CODE = re.compile(r'\s+[A-Z]+(-[A-Z0-9]+)+$')
 
 
 def _clean_product_name(name: str) -> str:
