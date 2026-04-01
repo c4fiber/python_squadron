@@ -306,7 +306,7 @@ class App(tk.Tk):
         _Field(row1, "태그", self.var_tag, width=14).pack(side="left", padx=(0,16))
         self.var_margin = tk.StringVar(value=self.cfg.get("pricing","margin_rate",fallback="15"))
         _Field(row1, "마진율 (%)", self.var_margin, width=8).pack(side="left", padx=(0,16))
-        tk.Label(row1, text="판매가 = (매입가 + 배송비) × 1.1 × (1 + 마진율%)",
+        tk.Label(row1, text="판매가 = (매입가 * 1.1) × (1 + 마진율%) + 배송비",
                  bg=C["surface"], fg=C["text_med"],
                  font=(FN, 8)).pack(side="left", padx=(0,0), anchor="s", pady=4)
 
