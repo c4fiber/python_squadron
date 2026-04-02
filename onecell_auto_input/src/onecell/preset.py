@@ -31,8 +31,10 @@ class PresetConfig:
     ])
 
     def make_parser(self) -> BaseParser:
-        """파서 인스턴스를 생성해 반환."""
-        return self.parser_class()
+        """label을 seller_prefix로 내장한 파서 인스턴스를 반환.
+        app.py는 prefix를 알 필요 없음 — Policy가 Mechanism에 주입.
+        """
+        return self.parser_class(seller_prefix=self.label)
 
 
 # ─────────────────────────────────────────────

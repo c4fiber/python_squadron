@@ -86,6 +86,12 @@ def _extract_color_size(raw_opt_name: str, raw_opt_val: str) -> tuple[str, str]:
 # 추상 기반 클래스
 # ─────────────────────────────────────────────
 class BaseParser(ABC):
+    def __init__(self, seller_prefix: str = "") -> None:
+        """seller_prefix: 판매자 관리코드 앞에 붙일 프리셋 키워드 (예: "스도", "모두")
+        preset.make_parser()가 주입 — 파서는 Policy를 알 필요 없음.
+        """
+        self.seller_prefix = seller_prefix
+
     @abstractmethod
     def parse(self, filepath: str) -> list[ProductRecord]:
         """파일을 읽어 ProductRecord 리스트를 반환한다."""
@@ -158,7 +164,7 @@ class SudoParser(BaseParser):
                 attr_name2      = ATTR_NAME2,
                 attr_val2       = av2,
                 stock           = DEFAULT_STOCK,
-                seller_code     = col(cells, "판매자 상품코드"),
+                seller_code     = f"{self.seller_prefix} {col(cells, '판매자 상품코드')}" if self.seller_prefix and col(cells, "판매자 상품코드") else col(cells, "판매자 상품코드"),
                 brand           = col(cells, "브랜드") or "상세설명참조",
                 manufacturer    = col(cells, "제조사") or "상세설명참조",
                 detail_html     = col(cells, "상품 상세정보"),
@@ -237,7 +243,7 @@ class ModuParser(BaseParser):
                 attr_name2      = ATTR_NAME2,
                 attr_val2       = av2,
                 stock           = DEFAULT_STOCK,
-                seller_code     = cv(r, "code"),
+                seller_code     = f"{self.seller_prefix} {cv(r, 'code')}" if self.seller_prefix and cv(r, "code") else cv(r, "code"),
                 brand           = "상세설명참조",
                 manufacturer    = "상세설명참조",
                 detail_html     = cv(r, "detail"),

@@ -100,6 +100,7 @@ def write_to_template(
     records: list[ProductRecord],
     tag: str, margin: float, fee: float, save_path: str,
 ) -> None:
+    records = sorted(records, key=lambda r: r.product_name.split()[-1] if r.product_name.split() else "")
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb["기초상품정보"]
     for i, rec in enumerate(records):
