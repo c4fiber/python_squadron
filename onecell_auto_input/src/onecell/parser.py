@@ -64,28 +64,43 @@ def _clean_product_name(name: str) -> str:
 
 def _extract_color_size(raw_opt_name: str, raw_opt_val: str) -> tuple[str, str]:
     """
-    옵션명/옵션값 원본에서 색상값·사이즈값을 추출한다.
-    - 속성명1은 항상 "색상", 속성명2는 항상 "사이즈"로 고정
-    - 옵션명이 개행 구분(\'색상\n사이즈\')이면 순서대로 색상/사이즈 매핑
-    - 옵션값이 개행 구분이면 첫 번째 → 색상값, 두 번째 → 사이즈값
+    옵션명/옵션값에서 색상값·사이즈값을 추출한다.
+    - 옵션명 키워드(색상/사이즈)로 vals 인덱스를 매핑
+    - vals 개수 > names 개수이면 초과분을 색상값으로 처리
+      예) names=['사이즈'], vals=['딥블루','S,M,L'] → 색상=딥블루, 사이즈=S,M,L
     - 값이 없으면 ONECOLOR / ONESIZE 기본값 적용
     """
     names = [n.strip() for n in raw_opt_name.split("\n") if n.strip()] if raw_opt_name else []
     vals  = [v.strip() for v in raw_opt_val.split("\n")  if v.strip()] if raw_opt_val  else []
 
-    # 옵션명 위치로 색상/사이즈 인덱스 결정
     color_idx = next((i for i, n in enumerate(names) if "색상" in n), None)
     size_idx  = next((i for i, n in enumerate(names) if "사이즈" in n), None)
 
-    color_val = vals[color_idx] if color_idx is not None and color_idx < len(vals) else ""
-    size_val  = vals[size_idx]  if size_idx  is not None and size_idx  < len(vals) else ""
+    # vals가 names보다 많으면 초과분이 앞쪽에 색상값으로 존재
+    offset = max(0, len(vals) - len(names))
 
-    # 옵션명 구분 없이 값만 있는 경우 (단일 값): 첫 번째를 색상으로
+    if color_idx is not None:
+        color_val = vals[color_idx + offset] if (color_idx + offset) < len(vals) else ""
+    elif offset > 0:
+        # 옵션명에 색상 없지만 vals가 더 많음 → 앞 초과분을 색상으로
+        color_val = vals[0]
+    else:
+        color_val = ""
+
+    if size_idx is not None:
+        size_val = vals[size_idx + offset] if (size_idx + offset) < len(vals) else ""
+    elif not names and len(vals) > 1:
+        size_val = vals[1]
+    else:
+        size_val = ""
+
+    # 옵션명 없고 vals만 있는 경우
     if not names and vals:
         color_val = vals[0]
         size_val  = vals[1] if len(vals) > 1 else ""
 
     return (color_val or DEFAULT_VAL1, size_val or DEFAULT_VAL2)
+
 
 
 # ─────────────────────────────────────────────
@@ -104,18 +119,21 @@ class BaseParser(ABC):
 
 
 # ─────────────────────────────────────────────
-# SudoParser — HTML 위장 XLS (UTF-8, BeautifulSoup)
+# SudoParser — HTML 위장 XLS 또는 바이너리 XLS 자동 감지
 # ─────────────────────────────────────────────
+_XLS_MAGIC = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'
+
+
 class SudoParser(BaseParser):
     """
     스도 파일 파서.
-    파일 형식: HTML 위장 XLS (확장자는 .xls, 내용은 HTML UTF-8).
-    옵션명/옵션값: 단일 셀에 <br/>로 구분된 복수 행.
+    파일 형식: HTML 위장 XLS(UTF-8) 또는 바이너리 XLS(CP949) 자동 감지.
+    컬럼 구조는 두 형식 모두 동일 — 읽기 엔진만 분기.
     """
 
     @staticmethod
     def _cell_text(td) -> str:
-        """<br>/<br/> → \\n 변환 후 텍스트 추출. strip=True는 \\n을 제거하므로 직접 순회."""
+        """<br>/<br/> → \\n 변환 후 텍스트 추출."""
         parts = []
         for child in td.children:
             if isinstance(child, NavigableString):
@@ -126,58 +144,86 @@ class SudoParser(BaseParser):
                 parts.append("\n")
         return "".join(parts).strip()
 
-    def parse(self, filepath: str) -> list[ProductRecord]:
+    def _make_record(self, col) -> ProductRecord | None:
+        """컬럼 접근 함수 col을 받아 ProductRecord를 생성한다."""
+        name = col("상품명")
+        if not name:
+            return None
+        name = _clean_product_name(name)
+        av1, av2 = _extract_color_size(col("옵션명"), col("옵션값"))
+        try:
+            buy = float(col("판매가") or 0)
+        except ValueError:
+            buy = 0.0
+        code = col("판매자 상품코드")
+        return ProductRecord(
+            product_name    = name,
+            buy_price       = buy,
+            attr_name1      = ATTR_NAME1,
+            attr_val1       = av1,
+            attr_name2      = ATTR_NAME2,
+            attr_val2       = av2,
+            stock           = DEFAULT_STOCK,
+            seller_code     = f"{self.seller_prefix} {code}" if self.seller_prefix and code else code,
+            brand           = col("브랜드") or "상세설명참조",
+            manufacturer    = col("제조사") or "상세설명참조",
+            detail_html     = col("상품 상세정보"),
+            notice_category = col("상품정보제공고시 품명") or "의류",
+            image_url       = col("대표 이미지 파일명"),
+        )
+
+    def _parse_html(self, filepath: str) -> list[ProductRecord]:
+        """HTML 위장 XLS 파싱."""
         with open(filepath, encoding="utf-8", errors="replace") as f:
             content = f.read()
         soup  = BeautifulSoup(content, "html.parser")
         table = soup.find("table")
         if not table:
-            raise ValueError("스도 파일에서 테이블을 찾을 수 없습니다.")
+            raise ValueError("스도 HTML 파일에서 테이블을 찾을 수 없습니다.")
         rows = table.find_all("tr")
         if len(rows) < 2:
-            raise ValueError("스도 파일에 데이터가 없습니다.")
-
+            raise ValueError("스도 HTML 파일에 데이터가 없습니다.")
         header = [self._cell_text(td) for td in rows[0].find_all(["td", "th"])]
-
-        def col(cells: list[str], name: str) -> str:
-            return cells[header.index(name)] if name in header else ""
 
         records = []
         for tr in rows[1:]:
             cells = [self._cell_text(td) for td in tr.find_all(["td", "th"])]
             while len(cells) < len(header):
                 cells.append("")
-
-            name = col(cells, "상품명")
-            if not name:
-                continue
-            name = _clean_product_name(name)
-
-            av1, av2 = _extract_color_size(
-                col(cells, "옵션명"), col(cells, "옵션값")
-            )
-
-            try:
-                buy = float(col(cells, "판매가") or 0)
-            except ValueError:
-                buy = 0.0
-
-            records.append(ProductRecord(
-                product_name    = name,
-                buy_price       = buy,
-                attr_name1      = ATTR_NAME1,
-                attr_val1       = av1,
-                attr_name2      = ATTR_NAME2,
-                attr_val2       = av2,
-                stock           = DEFAULT_STOCK,
-                seller_code     = f"{self.seller_prefix} {col(cells, '판매자 상품코드')}" if self.seller_prefix and col(cells, "판매자 상품코드") else col(cells, "판매자 상품코드"),
-                brand           = col(cells, "브랜드") or "상세설명참조",
-                manufacturer    = col(cells, "제조사") or "상세설명참조",
-                detail_html     = col(cells, "상품 상세정보"),
-                notice_category = col(cells, "상품정보제공고시 품명") or "의류",
-                image_url       = col(cells, "대표 이미지 파일명"),
-            ))
+            def col(name, _cells=cells, _header=header):
+                return _cells[_header.index(name)] if name in _header else ""
+            rec = self._make_record(col)
+            if rec:
+                records.append(rec)
         return records
+
+    def _parse_binary(self, filepath: str) -> list[ProductRecord]:
+        """바이너리 XLS 파싱 (xlrd)."""
+        wb = xlrd.open_workbook(filepath)
+        ws = wb.sheet_by_index(0)
+        if ws.nrows < 2:
+            raise ValueError("스도 바이너리 파일에 데이터가 없습니다.")
+        header = [str(ws.cell_value(0, c)) for c in range(ws.ncols)]
+
+        records = []
+        for r in range(1, ws.nrows):
+            def col(name, _r=r, _ws=ws, _header=header):
+                if name not in _header:
+                    return ""
+                v = _ws.cell_value(_r, _header.index(name))
+                return str(v).strip() if v != "" else ""
+            rec = self._make_record(col)
+            if rec:
+                records.append(rec)
+        return records
+
+    def parse(self, filepath: str) -> list[ProductRecord]:
+        """magic byte로 형식 자동 감지 후 적절한 파서로 분기."""
+        with open(filepath, "rb") as f:
+            magic = f.read(8)
+        if magic == _XLS_MAGIC:
+            return self._parse_binary(filepath)
+        return self._parse_html(filepath)
 
 
 # ─────────────────────────────────────────────
