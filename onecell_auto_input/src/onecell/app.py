@@ -89,7 +89,7 @@ def save_settings(cfg: configparser.ConfigParser) -> None:
 # 판매가 계산
 # ─────────────────────────────────────────────
 def calc_sell_price(buy: float, fee: float, margin: float) -> int:
-    """판매가 = round(매입가 × 1.1 × (1 + 마진율/100) + 배송비 / 10 × 10
+    """판매가 = round(매입가 × 1.1 × (1 + 마진율/100) + 배송비) / 10 × 10
     배송비는 VAT/마진 계산 이후 별도 가산.
     """
     raw = buy * 1.1 * (1 + margin / 100) + fee
@@ -112,6 +112,8 @@ def _write_chunk(records: list[ProductRecord], tag: str, margin: float, fee: flo
             "D": rec.attr_name2, "E": rec.attr_val2,   "H": sp,
             "J": rec.stock,      "K": rec.seller_code, "M": rec.brand,
             "N": rec.manufacturer, "O": "상세설명참조",
+            "P": "N",            "Q": "과세",          "R": "Y",
+            "S": "수입산",       "T": "아시아",         "U": "중국",
             "AC": rec.detail_html, "AG": rec.notice_category, "BC": rec.image_url,
         }.items():
             ws.cell(row=r, column=column_index_from_string(col), value=val)
