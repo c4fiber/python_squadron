@@ -47,13 +47,19 @@ DEFAULT_VAL1 = "ONECOLOR"
 DEFAULT_VAL2 = "ONESIZE"
 DEFAULT_STOCK = "999"
 
-# 제품명 끝 관리코드 패턴: 공백 + 대문자알파벳-숫자 (예: NF-74, SD-251014, URK-274)
-_TRAILING_CODE = re.compile(r'\s+[A-Z]+(-[A-Z0-9]+)+$')
+# 관리코드 패턴: 대문자알파벳으로 시작하고 -로 연결된 세그먼트 (예: NF-74, LED-RSIS-198)
+_CODE_PATTERN = re.compile(r'[A-Z]+(-[A-Z0-9]+)+')
 
 
 def _clean_product_name(name: str) -> str:
-    """제품명 끝의 관리코드 패턴([A-Z]+-[0-9]+(-[0-9]+)*)을 제거한다."""
-    return _TRAILING_CODE.sub('', name).strip()
+    """제품명 맨 앞 또는 맨 뒤의 관리코드 패턴을 제거한다.
+    앞: '^[A-Z]+(-[A-Z0-9]+)+\\s+', 뒤: '\\s+[A-Z]+(-[A-Z0-9]+)+$'
+    """
+    # 뒤에서 제거
+    name = re.sub(r'\s+[A-Z]+(-[A-Z0-9]+)+$', '', name)
+    # 앞에서 제거
+    name = re.sub(r'^[A-Z]+(-[A-Z0-9]+)+\s+', '', name)
+    return name.strip()
 
 
 def _extract_color_size(raw_opt_name: str, raw_opt_val: str) -> tuple[str, str]:

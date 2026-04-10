@@ -26,6 +26,7 @@ class PresetConfig:
     parser_class:    type[BaseParser] # 사용할 파서 클래스
     settings_key:    str              # settings.ini 섹션명 (배송비 등)
     default_fee:     float            # 배송비 기본값 (원)
+    max_records:     int   = 100      # 파일당 최대 상품 수 (초과 시 파일 분리)
     file_types:      list[tuple[str, str]] = field(default_factory=lambda: [
         ("XLS 파일", "*.xls"), ("모든 파일", "*.*")
     ])
@@ -45,6 +46,7 @@ SUDO = PresetConfig(
     parser_class = SudoParser,
     settings_key = "preset_sudo",
     default_fee  = 3000.0,
+    max_records  = 100,
 )
 
 MODU = PresetConfig(
@@ -52,6 +54,7 @@ MODU = PresetConfig(
     parser_class = ModuParser,
     settings_key = "preset_modu",
     default_fee  = 3300.0,
+    max_records  = 1000,
 )
 
 

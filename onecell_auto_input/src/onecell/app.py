@@ -89,6 +89,9 @@ def save_settings(cfg: configparser.ConfigParser) -> None:
 # 판매가 계산
 # ─────────────────────────────────────────────
 def calc_sell_price(buy: float, fee: float, margin: float) -> int:
+    """판매가 = round(매입가 × 1.1 × (1 + 마진율/100) + 배송비 / 10 × 10
+    배송비는 VAT/마진 계산 이후 별도 가산.
+    """
     raw = buy * 1.1 * (1 + margin / 100) + fee
     return int(round(raw / 10) * 10)
 
@@ -96,11 +99,8 @@ def calc_sell_price(buy: float, fee: float, margin: float) -> int:
 # ─────────────────────────────────────────────
 # 템플릿 쓰기
 # ─────────────────────────────────────────────
-def write_to_template(
-    records: list[ProductRecord],
-    tag: str, margin: float, fee: float, save_path: str,
-) -> None:
-    records = sorted(records, key=lambda r: r.product_name.split()[-1] if r.product_name.split() else "")
+def _write_chunk(records: list[ProductRecord], tag: str, margin: float, fee: float, save_path: str) -> None:
+    """단일 청크를 템플릿에 써서 저장."""""
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb["기초상품정보"]
     for i, rec in enumerate(records):
@@ -116,6 +116,29 @@ def write_to_template(
         }.items():
             ws.cell(row=r, column=column_index_from_string(col), value=val)
     wb.save(save_path)
+
+
+def write_to_template(
+    records: list[ProductRecord],
+    tag: str, margin: float, fee: float,
+    save_dir: str, preset_label: str, max_records: int,
+) -> list[str]:
+    """
+    레코드를 max_records 단위로 분할해 save_dir에 저장.
+    반환값: 저장된 파일 경로 리스트.
+    """
+    from datetime import datetime
+    records = sorted(records, key=lambda r: r.product_name.split()[-1] if r.product_name.split() else "")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved = []
+    chunks = [records[i:i + max_records] for i in range(0, len(records), max_records)]
+    for idx, chunk in enumerate(chunks):
+        suffix = f"_{idx + 1}" if len(chunks) > 1 else ""
+        filename = f"{preset_label}_{timestamp}{suffix}.xlsx"
+        path = os.path.join(save_dir, filename)
+        _write_chunk(chunk, tag, margin, fee, path)
+        saved.append(path)
+    return saved
 
 
 # ─────────────────────────────────────────────
@@ -307,7 +330,7 @@ class App(tk.Tk):
         _Field(row1, "태그", self.var_tag, width=14).pack(side="left", padx=(0,16))
         self.var_margin = tk.StringVar(value=self.cfg.get("pricing","margin_rate",fallback="15"))
         _Field(row1, "마진율 (%)", self.var_margin, width=8).pack(side="left", padx=(0,16))
-        tk.Label(row1, text="판매가 = (매입가 * 1.1) × (1 + 마진율%) + 배송비",
+        tk.Label(row1, text="판매가 = (매입가 × 1.1) × (1 + 마진율%) + 배송비",
                  bg=C["surface"], fg=C["text_med"],
                  font=(FN, 8)).pack(side="left", padx=(0,0), anchor="s", pady=4)
 
@@ -457,11 +480,8 @@ class App(tk.Tk):
         except ValueError:
             messagebox.showerror("입력 오류", "배송비는 숫자로 입력해 주세요.")
             return
-        save_path = filedialog.asksaveasfilename(
-            title="결과 파일 저장", defaultextension=".xlsx",
-            filetypes=[("Excel 파일", "*.xlsx")],
-            initialfile="onecell_output.xlsx")
-        if not save_path:
+        save_dir = filedialog.askdirectory(title="결과 파일 저장 폴더 선택")
+        if not save_dir:
             return
 
         self.btn_run.config(state="disabled")
@@ -471,13 +491,18 @@ class App(tk.Tk):
 
         try:
             records = preset.make_parser().parse(filepath)
-            write_to_template(records, tag, margin, fee, save_path)
+            saved = write_to_template(
+                records, tag, margin, fee,
+                save_dir, label, preset.max_records)
             self._prog_stop()
             self.btn_run.config(state="normal")
+            files_str = "\n".join(os.path.basename(p) for p in saved)
             self._set_status(
-                f"완료  {len(records)}개 상품  →  {os.path.basename(save_path)}",
+                f"완료  {len(records)}개 상품  →  {len(saved)}개 파일",
                 C["success"])
-            messagebox.showinfo("완료", f"{len(records)}개 상품이 저장되었습니다.\n\n{save_path}")
+            messagebox.showinfo(
+                "완료",
+                f"{len(records)}개 상품을 {len(saved)}개 파일로 저장했습니다.\n\n{files_str}\n\n저장 위치: {save_dir}")
         except Exception as exc:
             self._prog_stop()
             self.btn_run.config(state="normal")
