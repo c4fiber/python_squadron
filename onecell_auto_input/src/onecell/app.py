@@ -62,9 +62,13 @@ C = {
 # Settings
 # ─────────────────────────────────────────────
 def _default_cfg() -> dict:
-    d = {"general": {"tag": ""}, "pricing": {"margin_rate": "15"}}
+    d = {"general": {"tag": ""}}
     for p in REGISTRY.values():
-        d[p.settings_key] = {"shipping_fee": str(p.default_fee)}
+        d[p.settings_key] = {
+            "shipping_fee": str(p.default_fee),
+            "multiplier":   str(p.default_multiplier),
+            "extra":        str(p.default_extra),
+        }
     return d
 
 def load_settings() -> configparser.ConfigParser:
@@ -88,24 +92,23 @@ def save_settings(cfg: configparser.ConfigParser) -> None:
 # ─────────────────────────────────────────────
 # 판매가 계산
 # ─────────────────────────────────────────────
-def calc_sell_price(buy: float, fee: float, margin: float) -> int:
-    """판매가 = round(매입가 × 1.1 × (1 + 마진율/100) + 배송비) / 10 × 10
-    배송비는 VAT/마진 계산 이후 별도 가산.
-    """
-    raw = buy * 1.1 * (1 + margin / 100) + fee
+def calc_sell_price(buy: float, fee: float, multiplier: float, extra: float) -> int:
+    """판매가 = round((원가 × 1.1 + 배송비) × 마진배수 + 추가금액 / 10) × 10"""
+    raw = (buy * 1.1 + fee) * multiplier + extra
     return int(round(raw / 10) * 10)
 
 
 # ─────────────────────────────────────────────
 # 템플릿 쓰기
 # ─────────────────────────────────────────────
-def _write_chunk(records: list[ProductRecord], tag: str, margin: float, fee: float, save_path: str) -> None:
-    """단일 청크를 템플릿에 써서 저장."""""
+def _write_chunk(records: list[ProductRecord], tag: str,
+                  fee: float, multiplier: float, extra: float, save_path: str) -> None:
+    """단일 청크를 템플릿에 써서 저장."""
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb["기초상품정보"]
     for i, rec in enumerate(records):
         r = 8 + i
-        sp   = calc_sell_price(rec.buy_price, fee, margin) if rec.buy_price > 0 else 0
+        sp   = calc_sell_price(rec.buy_price, fee, multiplier, extra) if rec.buy_price > 0 else 0
         name = f"[{tag}] {rec.product_name}" if tag else rec.product_name
         for col, val in {
             "A": name,           "B": rec.attr_name1,  "C": rec.attr_val1,
@@ -114,6 +117,8 @@ def _write_chunk(records: list[ProductRecord], tag: str, margin: float, fee: flo
             "N": rec.manufacturer, "O": "상세설명참조",
             "P": "N",            "Q": "과세",          "R": "Y",
             "S": "수입산",       "T": "아시아",         "U": "중국",
+            "V": "수입사",
+            "AH": "Y",
             "AC": rec.detail_html, "AG": rec.notice_category, "BC": rec.image_url,
         }.items():
             ws.cell(row=r, column=column_index_from_string(col), value=val)
@@ -122,7 +127,7 @@ def _write_chunk(records: list[ProductRecord], tag: str, margin: float, fee: flo
 
 def write_to_template(
     records: list[ProductRecord],
-    tag: str, margin: float, fee: float,
+    tag: str, fee: float, multiplier: float, extra: float,
     save_dir: str, preset_label: str, max_records: int,
 ) -> list[str]:
     """
@@ -138,7 +143,7 @@ def write_to_template(
         suffix = f"_{idx + 1}" if len(chunks) > 1 else ""
         filename = f"{preset_label}_{timestamp}{suffix}.xlsx"
         path = os.path.join(save_dir, filename)
-        _write_chunk(chunk, tag, margin, fee, path)
+        _write_chunk(chunk, tag, fee, multiplier, extra, path)
         saved.append(path)
     return saved
 
@@ -325,25 +330,38 @@ class App(tk.Tk):
         inner1 = tk.Frame(card1, bg=C["surface"])
         inner1.pack(fill="x", padx=16, pady=12)
 
-        # 태그 + 마진율 (가로 배치)
+        # 태그
         row1 = tk.Frame(inner1, bg=C["surface"])
         row1.pack(fill="x", pady=(0, 10))
         self.var_tag = tk.StringVar(value=self.cfg.get("general","tag",fallback=""))
         _Field(row1, "태그", self.var_tag, width=14).pack(side="left", padx=(0,16))
-        self.var_margin = tk.StringVar(value=self.cfg.get("pricing","margin_rate",fallback="15"))
-        _Field(row1, "마진율 (%)", self.var_margin, width=8).pack(side="left", padx=(0,16))
-        tk.Label(row1, text="판매가 = (매입가 × 1.1) × (1 + 마진율%) + 배송비",
+        tk.Label(row1, text="판매가 = (원가 × 1.1 + 배송비) × 마진배수 + 추가금액",
                  bg=C["surface"], fg=C["text_med"],
                  font=(FN, 8)).pack(side="left", padx=(0,0), anchor="s", pady=4)
 
-        # 배송비 (프리셋별 동적 생성)
+        # 프리셋별 배송비 / 마진배수 / 추가금액
         row2 = tk.Frame(inner1, bg=C["surface"])
         row2.pack(fill="x", pady=(0, 10))
         for preset in REGISTRY.values():
-            var = tk.StringVar(value=self.cfg.get(
+            fee_var = tk.StringVar(value=self.cfg.get(
                 preset.settings_key, "shipping_fee", fallback=str(preset.default_fee)))
-            self._fee_vars[preset.label] = var
-            _Field(row2, f"{preset.label} 배송비 (원)", var, width=10).pack(side="left", padx=(0,16))
+            mul_var = tk.StringVar(value=self.cfg.get(
+                preset.settings_key, "multiplier", fallback=str(preset.default_multiplier)))
+            ext_var = tk.StringVar(value=self.cfg.get(
+                preset.settings_key, "extra", fallback=str(preset.default_extra)))
+            self._fee_vars[preset.label] = fee_var
+            self._mul_vars[preset.label] = mul_var
+            self._ext_vars[preset.label] = ext_var
+            grp = tk.Frame(row2, bg=C["surface"])
+            grp.pack(side="left", padx=(0, 24))
+            tk.Label(grp, text=f"[ {preset.label} ]", font=(FN, 9, "bold"),
+                     bg=C["surface"], fg=C["primary"]).pack(anchor="w")
+            r = tk.Frame(grp, bg=C["surface"])
+            r.pack(fill="x")
+            _Field(r, "배송비", fee_var, width=8).pack(side="left", padx=(0, 6))
+            _Field(r, "마진배수", mul_var, width=6).pack(side="left", padx=(0, 6))
+            _Field(r, "추가금", ext_var, width=8).pack(side="left")
+
 
         # 저장 버튼
         _FlatButton(inner1, "설정 저장", self._save_settings,
@@ -447,12 +465,16 @@ class App(tk.Tk):
             self.lbl_fee_info.config(text="")
 
     def _save_settings(self) -> None:
-        self.cfg["general"]["tag"]         = self.var_tag.get().strip()
-        self.cfg["pricing"]["margin_rate"] = self.var_margin.get().strip()
+        self.cfg["general"]["tag"] = self.var_tag.get().strip()
         for preset in REGISTRY.values():
-            var = self._fee_vars.get(preset.label)
-            if var:
-                self.cfg[preset.settings_key]["shipping_fee"] = var.get().strip()
+            lbl = preset.label
+            sec = preset.settings_key
+            if self._fee_vars.get(lbl):
+                self.cfg[sec]["shipping_fee"] = self._fee_vars[lbl].get().strip()
+            if self._mul_vars.get(lbl):
+                self.cfg[sec]["multiplier"]   = self._mul_vars[lbl].get().strip()
+            if self._ext_vars.get(lbl):
+                self.cfg[sec]["extra"]        = self._ext_vars[lbl].get().strip()
         save_settings(self.cfg)
         self._set_status("설정이 저장되었습니다.", C["success"])
 
@@ -469,18 +491,15 @@ class App(tk.Tk):
         if not filepath:
             messagebox.showwarning("파일 없음", "상품 파일을 먼저 선택해 주세요.")
             return
-        try:
-            margin = float(self.var_margin.get())
-        except ValueError:
-            messagebox.showerror("입력 오류", "마진율은 숫자로 입력해 주세요.")
-            return
         label  = self.var_preset.get()
         preset = REGISTRY[label]
         tag    = self.var_tag.get().strip()
         try:
-            fee = float(self._fee_vars[label].get())
+            fee        = float(self._fee_vars[label].get())
+            multiplier = float(self._mul_vars[label].get())
+            extra      = float(self._ext_vars[label].get())
         except ValueError:
-            messagebox.showerror("입력 오류", "배송비는 숫자로 입력해 주세요.")
+            messagebox.showerror("입력 오류", "배송비/마진배수/추가금액은 숫자로 입력해 주세요.")
             return
         save_dir = filedialog.askdirectory(title="결과 파일 저장 폴더 선택")
         if not save_dir:
@@ -494,7 +513,7 @@ class App(tk.Tk):
         try:
             records = preset.make_parser().parse(filepath)
             saved = write_to_template(
-                records, tag, margin, fee,
+                records, tag, fee, multiplier, extra,
                 save_dir, label, preset.max_records)
             self._prog_stop()
             self.btn_run.config(state="normal")
